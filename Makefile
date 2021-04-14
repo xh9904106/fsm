@@ -1,13 +1,13 @@
 
-.phony: static so clean
+.phony: all clean
 
-#all: libfsm
+all: libfsm
 
 libfsm: src/fsm.c src/fsm.h
-    mkdir build
-    gcc -std=c99 -I src src/fsm.c -o build/fsm.o
-    ar -rc lib/libfsm.a build/fsm.o
-    gcc -fPIC -shared build/fsm.o -o lib/libfsm.so
+	mkdir build
+	$(CC) -std=c99 -I src -c src/fsm.c -o build/fsm.o
+	$(AR) -rcs lib/libfsm.a build/fsm.o
+	$(CC) -fPIC -shared build/fsm.o -o lib/libfsm.so
 	
 clean:
 	rm -rf build

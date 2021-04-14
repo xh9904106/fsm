@@ -20,7 +20,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include "stateMachine.h"
+#include "fsm.h"
 
 static void goToErrorState( struct stateMachine *stateMachine,
       struct event *const event );
