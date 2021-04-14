@@ -19,94 +19,78 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
  */
+#ifndef __FSM_H__
+#define __FSM_H__
 
-#ifndef STATEMACHINE_H
-#define STATEMACHINE_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #include <stddef.h>
 #include <stdbool.h>
 
-struct event
+struct __TruEvent
 {
-   int type;
- 
-   void *data;
+    int nType;
+    void *pData;
 };
 
-struct state;
+typedef struct __TruEvent TruEvent;
 
+struct __TruState;
+typedef struct __TruState TruState;
 
-struct transition
+struct __TruTransition
 {
-   int eventType;
+   int nEType;
+   void *pCond;
+   bool ( *pGuard )( void *pCond, TruEvent *pEvent);
+   void ( *pAction )( void *pCSData, TruEvent *pEvent, void *pNSData);
+   TruState *pNextState;
+};
+typedef struct __TruTransition TruTransition;
 
-   void *condition;
-   
-   bool ( *guard )( void *condition, struct event *event );
-
-   void ( *action )( void *currentStateData, struct event *event,
-         void *newStateData );
-
-   struct state *nextState;
+struct __TruState
+{
+   TruState *pParent;
+   TruState *pEntry;
+   TruTransition *pTransitions;
+   size_t nNumOfTrans;
+   void *pData;
+   void (*pEntryAction)(void *pSData, TruEvent *pEvent);
+   void (*pExitAction)(void *pSData, TruEvent *pEvent);
 };
 
-struct state
+struct __TruFSM
 {
-   struct state *parentState;
-
-   struct state *entryState;
-
-   struct transition *transitions;
-
-   size_t numTransitions;
-
-   void *data;
-
-   void ( *entryAction )( void *stateData, struct event *event );
-
-   void ( *exitAction )( void *stateData, struct event *event );
+   TruState *pCState;
+   TruState *pPState;
+   TruState *pEState;
 };
 
+typedef struct __TruFSM TruFSM;
 
-struct stateMachine
+enum __EnuSMHandleRet
 {
-
-   struct state *currentState;
-
-   struct state *previousState;
-
-   struct state *errorState;
+   SM_ERROR_ARG = -2,
+   SM_ERROR_STATE_REACHED,
+   SM_STATE_CHANGED,
+   SM_STATE_LOOP_SELF,
+   SM_STATE_NO_STATE_CHANGED,
+   SM_STATE_FINAL_STATE_REACHED,
 };
 
+typedef enum __EnuSMHandleRet EnuSMHandleRet;
 
-void stateM_init( struct stateMachine *stateMachine,
-      struct state *initialState, struct state *errorState );
+void smInit(TruFSM *pSM, TruState *pIState, TruState *pEState);
+int smHandleEvent(TruFSM *pSM, TruEvent *pEvent);
+TruState *smGetCState(TruFSM *pSM);
+TruState *smGetPState(TruFSM *pSM);
+bool smStop(TruFSM *pSM);
 
-enum stateM_handleEventRetVals
-{
- 
-   stateM_errArg = -2,
+#ifdef __cplusplus
+}
+#endif
 
-   stateM_errorStateReached,
-   /** \brief The current state changed into a non-final state */
-   stateM_stateChanged,
+#endif //__FSM_H__
 
-   stateM_stateLoopSelf,
-
-   stateM_noStateChange,
-   /** \brief A final state (any but the error state) was reached */
-   stateM_finalStateReached,
-};
-
-
-int stateM_handleEvent( struct stateMachine *stateMachine,
-      struct event *event );
-
-
-struct state *stateM_currentState( struct stateMachine *stateMachine );
-
-struct state *stateM_previousState( struct stateMachine *stateMachine );
-
-bool stateM_stopped( struct stateMachine *stateMachine );
-
-#endif // STATEMACHINE_H

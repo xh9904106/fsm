@@ -21,146 +21,211 @@
  */
 
 #include "fsm.h"
+#include <stdint.h>
+#include <assert.h>
+#include <string.h>
 
-static void goToErrorState( struct stateMachine *stateMachine,
-      struct event *const event );
-static struct transition *getTransition( struct stateMachine *stateMachine,
-      struct state *state, struct event *const event );
+static void goToErrorState( TruFSM *fsm,
+      TruEvent *const event );
+static TruTransition *getTransition( TruFSM *fsm,
+      TruState *state, TruEvent *const event );
 
-void stateM_init( struct stateMachine *fsm,
-      struct state *initialState, struct state *errorState )
+void smInit( TruFSM *fsm,
+      TruState *initialState, TruState *errorState )
 {
    if ( !fsm )
       return;
 
-   fsm->currentState = initialState;
-   fsm->previousState = NULL;
-   fsm->errorState = errorState;
+   fsm->pCState = initialState;
+   fsm->pPState = NULL;
+   fsm->pEState = errorState;
+   
+   fsm->pCState->pEntryAction( fsm->pCState->pData, NULL );
 }
 
-int stateM_handleEvent( struct stateMachine *fsm,
-      struct event *event )
+static TruState **stateM_getTrasitionPath(TruState *pCurrentState, TruState *pNextState)
 {
-   if ( !fsm || !event )
-      return stateM_errArg;
-
-   if ( !fsm->currentState )
-   {
-      goToErrorState( fsm, event );
-      return stateM_errorStateReached;
-   }
-
-   if ( !fsm->currentState->numTransitions )
-      return stateM_noStateChange;
-
-   struct state *nextState = fsm->currentState;
-   do {
-      struct transition *transition = getTransition( fsm, nextState, event );
-
-      /* If there were no transitions for the given event for the current
-       * state, check if there are any transitions for any of the parent
-       * states (if any): */
-      if ( !transition )
-      {
-         nextState = nextState->parentState;
-         continue;
-      }
-
-      /* A transition must have a next state defined. If the user has not
-       * defined the next state, go to error state: */
-      if ( !transition->nextState )
-      {
-         goToErrorState( fsm, event );
-         return stateM_errorStateReached;
-      }
-
-      nextState = transition->nextState;
-
-      /* If the new state is a parent state, enter its entry state (if it has
-       * one). Step down through the whole family tree until a state without
-       * an entry state is found: */
-      while ( nextState->entryState )
-         nextState = nextState->entryState;
-
-      /* Run exit action only if the current state is left (only if it does
-       * not return to itself): */
-      if ( nextState != fsm->currentState && fsm->currentState->exitAction )
-         fsm->currentState->exitAction( fsm->currentState->data, event );
-
-      /* Run transition action (if any): */
-      if ( transition->action )
-         transition->action( fsm->currentState->data, event, nextState->
-               data );
-
-      /* Call the new state's entry action if it has any (only if state does
-       * not return to itself): */
-      if ( nextState != fsm->currentState && nextState->entryAction )
-         nextState->entryAction( nextState->data, event );
-
-      fsm->previousState = fsm->currentState;
-      fsm->currentState = nextState;
-      
-      /* If the state returned to itself: */
-      if ( fsm->currentState == fsm->previousState )
-         return stateM_stateLoopSelf;
-
-      if ( fsm->currentState == fsm->errorState )
-         return stateM_errorStateReached;
-
-      /* If the new state is a final state, notify user that the state
-       * machine has stopped: */
-      if ( !fsm->currentState->numTransitions )
-         return stateM_finalStateReached;
-
-      return stateM_stateChanged;
-   } while ( nextState );
-
-   return stateM_noStateChange;
+    static TruState *lptrv_Buf[20];
+    TruState *lptrv_CurrentStatePath[10];
+    TruState *lptrv_NextStatePath[10];
+    int32_t ls32v_CurrentStateCnt = 0;
+    int32_t ls32v_NextStateCnt = 0;
+    
+    /* Check Input */
+    if((!pCurrentState) || (!pNextState))
+    {
+        //error(" ");
+        return NULL;
+    }
+    
+    /* get path */
+    ls32v_CurrentStateCnt = 0;
+    while(pCurrentState && (ls32v_CurrentStateCnt<10))
+    {
+        lptrv_CurrentStatePath[ls32v_CurrentStateCnt++] = pCurrentState;
+        pCurrentState = pCurrentState->pParent;
+    }
+    
+    ls32v_NextStateCnt = 0;
+    while(pNextState->pEntry)
+    {
+        pNextState = pNextState->pEntry;
+    }
+    
+    while(pNextState && (ls32v_NextStateCnt<10))
+    {
+        lptrv_NextStatePath[ls32v_NextStateCnt++] = pNextState;
+        pNextState = pNextState->pParent;
+    }
+    
+    for(;(ls32v_CurrentStateCnt>0)&&(ls32v_NextStateCnt>0); (ls32v_CurrentStateCnt--)&&(ls32v_NextStateCnt--))
+    {
+        if(lptrv_CurrentStatePath[ls32v_CurrentStateCnt-1] != lptrv_NextStatePath[ls32v_NextStateCnt-1])
+        {
+            break;
+        }
+    }
+    
+    /* */
+    memset(lptrv_Buf, 0, sizeof(lptrv_Buf));
+    for(int32_t ls32v_Cnt=0; ls32v_Cnt<ls32v_CurrentStateCnt; ls32v_Cnt++)
+    {
+        lptrv_Buf[ls32v_Cnt] = lptrv_CurrentStatePath[ls32v_Cnt];
+    }
+    
+    for(int32_t ls32v_Cnt=0; ls32v_Cnt<ls32v_NextStateCnt; ls32v_Cnt++)
+    {
+        lptrv_Buf[ls32v_Cnt+10] = lptrv_NextStatePath[ls32v_NextStateCnt-1-ls32v_Cnt];
+    }
+    
+    return (TruState **)&lptrv_Buf;
 }
 
-struct state *stateM_currentState( struct stateMachine *fsm )
+int32_t smHandleEvent(TruFSM *pFSM, TruEvent *pEvent)
+{
+    int32_t ls32v_Ret = SM_STATE_NO_STATE_CHANGED;
+    
+    assert(pFSM);
+    assert(pEvent);
+    
+    if(pFSM->pCState == NULL)
+    {
+        goToErrorState(pFSM, pEvent);
+        return SM_ERROR_STATE_REACHED;
+    }
+    
+    if(pFSM->pCState->nNumOfTrans == 0)
+    {
+        return SM_STATE_NO_STATE_CHANGED;
+    }
+    
+    TruState *lptrv_CurrentState = pFSM->pCState;
+
+    while(lptrv_CurrentState)
+    {
+        TruTransition *lptrv_Transition = getTransition(pFSM, lptrv_CurrentState, pEvent);
+        if(lptrv_Transition != NULL)
+        {
+            TruState *lptrv_NextState = lptrv_Transition->pNextState;
+            while((lptrv_NextState!=NULL)&&(lptrv_NextState->pEntry!=NULL))
+            {
+                lptrv_NextState = lptrv_NextState->pEntry;
+            }
+            
+            if((lptrv_NextState!=NULL) && (lptrv_NextState!=pFSM->pCState))
+            {
+                TruState **lptrv_TransitionPath = stateM_getTrasitionPath(pFSM->pCState, lptrv_NextState);
+                
+                assert(lptrv_TransitionPath);
+                
+                for(int32_t ls32v_Cnt=0; (lptrv_TransitionPath[ls32v_Cnt]!=NULL); ls32v_Cnt++)
+                {
+                    TruState *lptrv_State = lptrv_TransitionPath[ls32v_Cnt];
+                    
+                    lptrv_State->pExitAction(lptrv_State->pData, pEvent);
+                }
+                
+                if(lptrv_Transition->pAction)
+                {
+                    lptrv_Transition->pAction(lptrv_CurrentState->pData, pEvent, lptrv_Transition->pNextState->pData);
+                }
+                
+                for(int32_t ls32v_Cnt=0; lptrv_TransitionPath[ls32v_Cnt+10]!=NULL; ls32v_Cnt++)
+                {
+                    TruState *lptrv_State = lptrv_TransitionPath[ls32v_Cnt+10];
+                    
+                    lptrv_State->pEntryAction(lptrv_State->pData, pEvent);
+                }
+
+                pFSM->pPState = pFSM->pCState;
+                pFSM->pCState = lptrv_NextState;
+                
+                if(pFSM->pCState->nNumOfTrans == 0)
+                {
+                    ls32v_Ret = SM_STATE_FINAL_STATE_REACHED;
+                }
+                else
+                {
+                    ls32v_Ret = SM_STATE_CHANGED;
+                }
+            }
+            else if(lptrv_Transition->pAction)
+            {
+                lptrv_Transition->pAction(lptrv_CurrentState->pData, pEvent, NULL);
+            }
+
+            break;
+        }
+        
+        lptrv_CurrentState = lptrv_CurrentState->pParent;
+    }   
+    
+    return ls32v_Ret;
+}
+
+TruState *smGetCState( TruFSM *fsm )
 {
    if ( !fsm )
       return NULL;
 
-   return fsm->currentState;
+   return fsm->pCState;
 }
 
-struct state *stateM_previousState( struct stateMachine *fsm )
+TruState *smGetPState( TruFSM *fsm )
 {
    if ( !fsm )
       return NULL;
 
-   return fsm->previousState;
+   return fsm->pPState;
 }
 
 
-static void goToErrorState( struct stateMachine *fsm,
-      struct event *const event )
+static void goToErrorState( TruFSM *fsm,
+      TruEvent *const event )
 {
-   fsm->previousState = fsm->currentState;
-   fsm->currentState = fsm->errorState;
+   fsm->pPState = fsm->pCState;
+   fsm->pCState = fsm->pEState;
 
-   if ( fsm->currentState && fsm->currentState->entryAction )
-      fsm->currentState->entryAction( fsm->currentState->data, event );
+   if ( fsm->pCState && fsm->pCState->pEntryAction )
+      fsm->pCState->pEntryAction( fsm->pCState->pData, event );
 }
 
-static struct transition *getTransition( struct stateMachine *fsm,
-      struct state *state, struct event *const event )
+static TruTransition *getTransition( TruFSM *fsm,
+      TruState *state, TruEvent *const event )
 {
    size_t i;
 
-   for ( i = 0; i < state->numTransitions; ++i )
+   for ( i = 0; i < state->nNumOfTrans; ++i )
    {
-      struct transition *t = &state->transitions[ i ];
+      TruTransition *t = &state->pTransitions[ i ];
 
       /* A transition for the given event has been found: */
-      if ( t->eventType == event->type )
+      if ( t->nEType == event->nType )
       {
-         if ( !t->guard )
+         if ( !t->pGuard )
             return t;
          /* If transition is guarded, ensure that the condition is held: */
-         else if ( t->guard( t->condition, event ) )
+         else if ( t->pGuard( t->pCond, event ) )
             return t;
       }
    }
@@ -169,10 +234,10 @@ static struct transition *getTransition( struct stateMachine *fsm,
    return NULL;
 }
 
-bool stateM_stopped( struct stateMachine *stateMachine )
+bool smStop( TruFSM *fsm )
 {
-   if ( !stateMachine )
+   if ( !fsm )
       return true;
 
-   return stateMachine->currentState->numTransitions == 0;
+   return fsm->pCState->nNumOfTrans == 0;
 }
