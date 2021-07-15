@@ -30,6 +30,17 @@ static void goToErrorState( TruFSM *fsm,
 static TruTransition *getTransition( TruFSM *fsm,
       TruState *state, TruEvent *const event );
 
+static void smEntry(TruState *pState)
+{
+    if(pState->pParent)
+    {
+         TruState *lptrv_State = pState->pParent;
+         smEntry(lptrv_State);
+    }
+
+    pState->pEntryAction(pState->pData, NULL);
+}
+
 void smInit( TruFSM *fsm,
       TruState *initialState, TruState *errorState )
 {
@@ -40,7 +51,8 @@ void smInit( TruFSM *fsm,
    fsm->pPState = NULL;
    fsm->pEState = errorState;
    
-   fsm->pCState->pEntryAction( fsm->pCState->pData, NULL );
+   //fsm->pCState->pEntryAction( fsm->pCState->pData, NULL );
+   smEntry(fsm->pCState);
 }
 
 static TruState **stateM_getTrasitionPath(TruState *pCurrentState, TruState *pNextState)
